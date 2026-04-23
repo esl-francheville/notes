@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Dépôt note de frais</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:0;background:#f6f7fb;color:#111}
+    .wrap{max-width:760px;margin:0 auto;padding:16px}
+    .card{background:#fff;border-radius:16px;padding:16px;box-shadow:0 8px 24px rgba(0,0,0,.08);margin:12px 0}
+    h1{font-size:20px;margin:0 0 8px}
+    label{display:block;font-size:13px;margin:10px 0 6px;color:#333}
+    input, textarea{width:100%;box-sizing:border-box;padding:12px;border:1px solid #d8dbe7;border-radius:12px;font-size:16px;background:#fff}
+    textarea{min-height:84px;resize:vertical}
+    .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .btns{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+    button{border:0;border-radius:12px;padding:12px 14px;font-size:16px;cursor:pointer}
+    .primary{background:#2563eb;color:#fff}
+    .secondary{background:#e5e7eb;color:#111}
+    .danger{background:#ef4444;color:#fff}
+    .muted{color:#666;font-size:12px}
+    .list{margin-top:8px}
+    .item{display:flex;gap:10px;align-items:center;border:1px solid #edf0f7;border-radius:12px;padding:10px;margin:8px 0}
+    .thumb{width:54px;height:54px;border-radius:10px;object-fit:cover;background:#f0f2f8}
+    .meta{flex:1}
+    .small{font-size:12px;color:#555}
+    .ok{color:#16a34a;font-weight:600}
+    .loading{opacity:.6;pointer-events:none}
+    .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:12px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Dépôt de note de frais</h1>
+      <div class="muted">
+        Tous les champs sont obligatoires. Date autorisée : <b>du 01/01 de l’année précédente</b> à <b>aujourd’hui</b>.
+      </div>
+      <div class="muted" style="margin-top:6px">
+        Session : <span class="pill" id="sessionPill"></span>
+      </div>
+    </div>
+
+    <div class="card" id="formCard">
+      <div class="row">
+        <div>
+          <label>Nom</label>
+          <input id="nom" autocomplete="family-name" required />
+        </div>
+        <div>
+          <label>Prénom</label>
+          <input id="prenom" autocomplete="given-name" required />
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label>Date de la dépense</label>
+          <input id="dateDepense" type="date" required />
+        </div>
+        <div>
+          <label>Montant (€)</label>
+          <input id="montant" inputmode="decimal" placeholder="ex: 18,50" required />
+        </div>
+      </div>
+
+      <label>Commentaire</label>
+      <textarea id="commentaire" required placeholder="ex: déplacement / achat matériel..."></textarea>
+
+      <label>Photo du justificatif (JPG)</label>
+      <input id="photo" type="file" accept="image/jpeg" capture="environment" required />
+      <div class="muted" id="hint"></div>
+
+      <div class="btns">
+        <button class="primary" id="addBtn">Ajouter cette note</button>
+        <button class="secondary" id="finishBtn">Envoyer / Terminer</button>
+        <button class="danger" id="resetBtn">Réinitialiser</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div><b>Notes ajoutées</b></div>
+      <div class="muted" id="stats"></div>
+      <div class="list" id="list"></div>
+    </div>
+  </div>
+
+<script>
+  /**************** CONFIG ****************/
+  // Remplace par l'URL "Web app" Apps Script (celle qui finit par /exec)
+  const APPS_SCRIPT_URL = "PASTE_YOUR_APPS_SCRIPT_EXEC_URL_HERE";
+
+  // Optionnel (recommandé) : petite clé anti-spam (doit aussi être vérifiée côté Apps Script)
+  // const API_KEY = "CHANGE_ME";
+  const API_KEY = "";
+
+  const MAX_LOCAL = 10; // côté front (le back doit aussi limiter)
+
+  /*************** SESSION ***************/
+  const SESSION_KEY = "ndf_session_id_v2";
+  const sessionId = localStorage.getItem(SESSION_KEY) || crypto.randomUUID();
+  localStorage.setItem(SESSION_KEY, sessionId);
+  document.getElementById("sessionPill").textContent = sessionId;
+
+  const $ = (id) => document.getElementById(id);
+  const state = { uploaded: [] };
+
+  function setLoading(v){ $("formCard").classList.toggle("loading", v); }
+
+  function requiredValue(el, label){
+    const v = (el.value || "").trim();
+    if(!v) throw new Error(`Champ obligatoire : ${label}`);
+    return v;
+  }
+
+  function parseMontant(v){
+    const n = Number(String(v).replace(",", "."));
+    if(!isFinite(n) || n <= 0) throw new Error("Montant invalide (doit être > 0).");
+    return n.toFixed(2);
+  }
+
+  function computeDateBounds(){
+    const now = new Date();
+    const year = now.getFullYear();
+    const min = new Date(year - 1, 0, 1); // 01/01 année-1
+    const max = new Date(year, now.getMonth(), now.getDate()); // aujourd'hui
+    const fmt = (d) => d.toISOString().slice(0,10);
+    return { min: fmt(min), max: fmt(max) };
+  }
+
+  function validateDate(dateStr){
+    const {min, max} = computeDateBounds();
+    if(dateStr < min) throw new Error("Date interdite : antérieure au 01/01 de l’année précédente.");
+    if(dateStr > max) throw new Error("Date interdite : postérieure à aujourd’hui.");
+  }
+
+  function render(){
+    const total = state.uploaded.reduce((s,x)=>s + Number(x.montant), 0);
+    $("stats").textContent = `${state.uploaded.length} note(s) ajoutée(s) — Total: ${total.toFixed(2)} €`;
+    const list = $("list");
+    list.innerHTML = "";
+    state.uploaded.forEach((x) => {
+      const div = document.createElement("div");
+      div.className = "item";
+      div.innerHTML = `
+        <img class="thumb" src="${x.preview}" alt="       <div><span class="ok">OK</span> — ${x.date} — ${x.montant} €</div>
+          <div class="small"><a href="${x.url}" target="_blank"</div>
+        </div>
+      `;
+      list.appendChild(div);
+    });
+  }
+
+  /*************** IMAGE UTILS ***************/
+  function readAsDataURL(file){
+    return new Promise((resolve, reject)=>{
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = reject;
+      r.readAsDataURL(file);
+    });
+  }
+  function loadImage(dataUrl){
+    return new Promise((resolve, reject)=>{
+      const img = new Image();
+      img.onload = ()=>resolve(img);
+      img.onerror = reject;
+      img.src = dataUrl;
+    });
+  }
+  async function compressJpeg(file, maxW=1600, quality=0.75){
+    if(file.type !== "image/jpeg") throw new Error("Uniquement JPG accepté.");
+    const dataUrl = await readAsDataURL(file);
+    const img = await loadImage(dataUrl);
+    const ratio = Math.min(1, maxW / img.width);
+    const w = Math.round(img.width * ratio);
+    const h = Math.round(img.height * ratio);
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+    return canvas.toDataURL("image/jpeg", quality);
+  }
+
+  /*************** API CALL ***************/
+  async function postToGAS(payload){
+    if(APPS_SCRIPT_URL.includes("PASTE_")) throw new Error("Configure APPS_SCRIPT_URL dans index.html");
+    // IMPORTANT: envoyer en text/plain pour éviter le preflight CORS d'Apps Script [2](https://stackoverflow.com/questions/53433938/how-do-i-allow-a-cors-requests-in-my-google-script)[3](https://diyavijay.medium.com/struggling-with-cors-in-google-apps-script-heres-the-fix-e3eec09f07dd)
+    const res = await fetch(APPS_SCRIPT_URL, {
+      method: "POST",
+      redirect: "follow", // recommandé pour GAS [2](https://stackoverflow.com/questions/53433938/how-do-i-allow-a-cors-requests-in-my-google-script)
+      headers: { "Content-Type": "text/plain;charset=utf-8" }, // évite OPTIONS preflight [2](https://stackoverflow.com/questions/53433938/how-do-i-allow-a-cors-requests-in-my-google-script)[3](https://diyavijay.medium.com/struggling-with-cors-in-google-apps-script-heres-the-fix-e3eec09f07dd)
+      body: JSON.stringify(payload)
+    });
+    // Même si GAS renvoie du JSON, certaines configs peuvent renvoyer du texte.
+    const text = await res.text();
+    let json;
+    try { json = JSON.parse(text); } catch { json = { ok:false, error:"Réponse non-JSON", raw:text }; }
+    return json;
+  }
+
+  /*************** INIT UI ***************/
+  const bounds = computeDateBounds();
+  $("dateDepense").min = bounds.min;
+  $("dateDepense").max = bounds.max;
+  $("hint").textContent = `JPG uniquement — max ${MAX_LOCAL} justificatifs par session.`;
+
+  $("addBtn").addEventListener("click", async () => {
+    try{
+      if(state.uploaded.length >= MAX_LOCAL) throw new Error(`Limite atteinte : ${MAX_LOCAL} justificatifs maximum.`);
+      const nom = requiredValue($("nom"), "Nom");
+      const prenom = requiredValue($("prenom"), "Prénom");
+      const dateDepense = requiredValue($("dateDepense"), "Date de la dépense");
+      validateDate(dateDepense);
+      const montant = parseMontant(requiredValue($("montant"), "Montant"));
+      const commentaire = requiredValue($("commentaire"), "Commentaire");
+
+      const file = $("photo").files?.[0];
+      if(!file) throw new Error("Photo obligatoire (JPG).");
+      if(file.type !== "image/jpeg") throw new Error("Photo invalide : uniquement JPG.");
+
+      setLoading(true);
+      const dataUrl = await compressJpeg(file);
+
+      const payload = {
+        action: "submitExpense",
+        apiKey: API_KEY,
+        sessionId,
+        nom, prenom,
+        dateDepense,
+        montant,
+        commentaire,
+        dataUrl,
+        originalFileName: file.name || "justificatif.jpg"
+      };
+
+      const out = await postToGAS(payload);
+      setLoading(false);
+
+      if(!out.ok) throw new Error(out.error || "Erreur inconnue.");
+
+      state.uploaded.push({ date: dateDepense, montant, url: out.fileUrl, preview: dataUrl });
+      // reset partiel pour ajouter une autre note
+      $("montant").value = "";
+      $("commentaire").value = "";
+      $("photo").value = "";
+      render();
+      alert("✅ Note ajoutée ! Vous pouvez en ajouter une autre.");
+    }catch(e){
+      setLoading(false);
+      alert("❌ " + (e?.message || e));
+    }
+  });
+
+  $("finishBtn").addEventListener("click", async () => {
+    try{
+      if(state.uploaded.length === 0) throw new Error("Ajoutez au moins une note avant de terminer.");
+      setLoading(true);
+      const out = await postToGAS({ action:"finalizeSession", apiKey: API_KEY, sessionId });
+      setLoading(false);
+
+      if(!out.ok) throw new Error(out.error || "Erreur inconnue.");
+      alert(`✅ Envoyé ! (${out.count} justificatif(s), total ${out.total} €)\n\nMerci.`);
+      localStorage.removeItem(SESSION_KEY);
+      location.reload();
+    }catch(e){
+      setLoading(false);
+      alert("❌ " + (e?.message || e));
+    }
+  });
+
+  $("resetBtn").addEventListener("click", () => {
+    if(confirm("Réinitialiser la session en cours ? (Les justificatifs déjà envoyés restent dans Drive/Sheets)")){
+      localStorage.removeItem(SESSION_KEY);
+      location.reload();
+    }
+  });
+
+  render();
+</script>
+</body>
+</html>
