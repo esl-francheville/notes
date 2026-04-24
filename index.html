@@ -38,10 +38,7 @@
     <div class="card">
       <h1>Dépôt de note de frais</h1>
       <div class="muted">
-        Tous les champs sont obligatoires. Date autorisée : <b>du 01/01 de l’année précédente</b> à <b>aujourd’hui</b>.
-      </div>
-      <div class="muted" style="margin-top:6px">
-        Session : <span class="pill" id="sessionPill"></span>
+        Merci de remplir tous les champs.
       </div>
     </div>
 
@@ -68,7 +65,7 @@
         </div>
       </div>
 
-      <label>Commentaire</label>
+      <label>Dépense</label>
       <textarea id="commentaire" required placeholder="ex: déplacement / achat matériel..."></textarea>
 
       <div class="checkline">
@@ -91,8 +88,6 @@
       <div class="fileStatus" id="fileStatus">
         Aucun justificatif sélectionné
       </div>
-
-      <div class="muted" id="hint"></div>
 
       <div class="btns">
         <button class="primary btnWide" id="sendBtn">Envoyer la note</button>
@@ -334,7 +329,7 @@ function initUI() {
 
   // hint
   $("hint").textContent =
-    "Choisissez une photo ou un fichier. L'image sera convertie/compressée en JPEG automatiquement si nécessaire.";
+    "Choisissez une photo ou un fichier.";
 
   // boutons
   $("sendBtn").addEventListener("click", onSend);
