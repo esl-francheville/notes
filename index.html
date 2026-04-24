@@ -1,4 +1,4 @@
-<!doctype html>
+>
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
@@ -16,16 +16,11 @@
     .btns{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
     button{border:0;border-radius:12px;padding:12px 14px;font-size:16px;cursor:pointer}
     .primary{background:#2563eb;color:#fff}
-    .secondary{background:#e5e7eb;color:#111}
     .danger{background:#ef4444;color:#fff}
     .muted{color:#666;font-size:12px}
-    .list{margin-top:8px}
-    .item{display:flex;gap:10px;align-items:center;border:1px solid #edf0f7;border-radius:12px;padding:10px;margin:8px 0}
-    .thumb{width:54px;height:54px;border-radius:10px;object-fit:cover;background:#f0f2f8}
-    .meta{flex:1}
-    .small{font-size:12px;color:#555}
-    .ok{color:#16a34a;font-weight:600}
     .loading{opacity:.6;pointer-events:none}
+    .checkline{display:flex;align-items:center;gap:10px;margin-top:10px}
+    .checkline input{width:auto}
     .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:12px}
   </style>
 </head>
@@ -45,11 +40,11 @@
       <div class="row">
         <div>
           <label>Nom</label>
-          <input id="nom" autocomplete="family-name" required />
+          <input id="nom" required autocomplete="family-name" />
         </div>
         <div>
           <label>Prénom</label>
-          <input id="prenom" autocomplete="given-name" required />
+          <input id="prenom" required autocomplete="given-name" />
         </div>
       </div>
 
@@ -67,44 +62,29 @@
       <label>Commentaire</label>
       <textarea id="commentaire" required placeholder="ex: déplacement / achat matériel..."></textarea>
 
-      <label>Photo du justificatif (JPG)</label>
-      <input id="photo" type="file" accept="image/jpeg" capture="environment" required />
+      <div class="checkline">
+        <input id="cbEsl" type="checkbox" />
+        <label for="cbEsl" style="margin:0">CB ESL</label>
+      </div>
+
+      <label>Justificatif (photo ou fichier)</label>
+      <!-- Important : PAS de capture=... pour laisser le choix sur mobile -->
+      <input id="photo" type="file" accept="image/*" required />
       <div class="muted" id="hint"></div>
 
       <div class="btns">
-        <button class="primary" id="addBtn">Ajouter cette note</button>
-        <button class="secondary" id="finishBtn">Envoyer / Terminer</button>
+        <button class="primary" id="sendBtn">Envoyer la note</button>
         <button class="danger" id="resetBtn">Réinitialiser</button>
       </div>
-    </div>
-
-    <div class="card">
-      <div><b>Notes ajoutées</b></div>
-      <div class="muted" id="stats"></div>
-      <div class="list" id="list"></div>
     </div>
   </div>
 
 <script>
   /**************** CONFIG ****************/
-  // Remplace par l'URL "Web app" Apps Script (celle qui finit par /exec)
-  const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx_JIwuNj91xu3EJLK4OuM0bZm7dmYXfr0w2CI_yLxoTyXjCm1qingDcE4ENpZYFL74DA/exec";
-
-  // Optionnel (recommandé) : petite clé anti-spam (doit aussi être vérifiée côté Apps Script)
-  // const API_KEY = "CHANGE_ME";
-  const API_KEY = "";
-
-  const MAX_LOCAL = 10; // côté front (le back doit aussi limiter)
-
-  /*************** SESSION ***************/
-  const SESSION_KEY = "ndf_session_id_v2";
-  const sessionId = localStorage.getItem(SESSION_KEY) || crypto.randomUUID();
-  localStorage.setItem(SESSION_KEY, sessionId);
-  document.getElementById("sessionPill").textContent = sessionId;
+  const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxc3nC6iROsnVslalW6GPg6rI_fO2FXCAM3l-NOyH2QKdtwvZLkRPX_HNIyMf8q7ILZug/exec";
+  const API_KEY = ""; // optionnel
 
   const $ = (id) => document.getElementById(id);
-  const state = { uploaded: [] };
-
   function setLoading(v){ $("formCard").classList.toggle("loading", v); }
 
   function requiredValue(el, label){
@@ -134,24 +114,14 @@
     if(dateStr > max) throw new Error("Date interdite : postérieure à aujourd’hui.");
   }
 
-  function render(){
-    const total = state.uploaded.reduce((s,x)=>s + Number(x.montant), 0);
-    $("stats").textContent = `${state.uploaded.length} note(s) ajoutée(s) — Total: ${total.toFixed(2)} €`;
-    const list = $("list");
-    list.innerHTML = "";
-    state.uploaded.forEach((x) => {
-      const div = document.createElement("div");
-      div.className = "item";
-      div.innerHTML = `
-        <img class="thumb" src="${x.preview}" alt="       <div><span class="ok">OK</span> — ${x.date} — ${x.montant} €</div>
-          <div class="small"><a href="${x.url}" target="_blank"</div>
-        </div>
-      `;
-      list.appendChild(div);
-    });
-  }
+  /*************** SessionID ***************/
+  // Utile pour logs/anti-abus côté serveur, et pour identifier l’utilisateur en cas de souci.
+  const SESSION_KEY = "ndf_session_id_single_v2";
+  const sessionId = localStorage.getItem(SESSION_KEY) || crypto.randomUUID();
+  localStorage.setItem(SESSION_KEY, sessionId);
+  document.getElementById("sessionPill").textContent = sessionId;
 
-  /*************** IMAGE UTILS ***************/
+  /*************** Image: conversion + compression ***************/
   function readAsDataURL(file){
     return new Promise((resolve, reject)=>{
       const r = new FileReader();
@@ -160,6 +130,7 @@
       r.readAsDataURL(file);
     });
   }
+
   function loadImage(dataUrl){
     return new Promise((resolve, reject)=>{
       const img = new Image();
@@ -168,69 +139,119 @@
       img.src = dataUrl;
     });
   }
-  async function compressJpeg(file, maxW=1600, quality=0.75){
-    if(file.type !== "image/jpeg") throw new Error("Uniquement JPG accepté.");
-    const dataUrl = await readAsDataURL(file);
-    const img = await loadImage(dataUrl);
+
+  function estimateBytesFromDataUrl(dataUrl){
+    // bytes approx = base64_len * 3/4
+    const i = dataUrl.indexOf(",") + 1;
+    const b64len = Math.max(0, dataUrl.length - i);
+    return Math.floor(b64len * 0.75);
+  }
+
+  /**
+   * Convertit n'importe quelle image lisible par le navigateur en JPEG,
+   * et compresse (downscale + qualité) si besoin.
+   *
+   * - maxW: largeur max
+   * - targetBytes: poids cible approximatif (ex: 1.5MB)
+   */
+  async function toJpegCompressedDataUrl(file, maxW=1600, targetBytes=1_500_000){
+    if(!file.type.startsWith("image/")) throw new Error("Fichier invalide : image attendue.");
+
+    const src = await readAsDataURL(file);
+    const img = await loadImage(src);
+
     const ratio = Math.min(1, maxW / img.width);
     const w = Math.round(img.width * ratio);
     const h = Math.round(img.height * ratio);
+
     const canvas = document.createElement("canvas");
     canvas.width = w; canvas.height = h;
-    canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-    return canvas.toDataURL("image/jpeg", quality);
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(img, 0, 0, w, h);
+
+    // Si l'image source est déjà petite, on encode en JPEG haute qualité
+    let q = 0.86;
+    let out = canvas.toDataURL("image/jpeg", q);
+
+    // Ajuste la qualité pour viser targetBytes
+    while(estimateBytesFromDataUrl(out) > targetBytes && q > 0.45){
+      q -= 0.08;
+      out = canvas.toDataURL("image/jpeg", q);
+    }
+    return out; // data:image/jpeg;base64,...
   }
 
-  /*************** API CALL ***************/
+  /*************** API call ***************/
   async function postToGAS(payload){
     if(APPS_SCRIPT_URL.includes("PASTE_")) throw new Error("Configure APPS_SCRIPT_URL dans index.html");
-    // IMPORTANT: envoyer en text/plain pour éviter le preflight CORS d'Apps Script [2](https://stackoverflow.com/questions/53433938/how-do-i-allow-a-cors-requests-in-my-google-script)[3](https://diyavijay.medium.com/struggling-with-cors-in-google-apps-script-heres-the-fix-e3eec09f07dd)
+
     const res = await fetch(APPS_SCRIPT_URL, {
       method: "POST",
-      redirect: "follow", // recommandé pour GAS [2](https://stackoverflow.com/questions/53433938/how-do-i-allow-a-cors-requests-in-my-google-script)
-      headers: { "Content-Type": "text/plain;charset=utf-8" }, // évite OPTIONS preflight [2](https://stackoverflow.com/questions/53433938/how-do-i-allow-a-cors-requests-in-my-google-script)[3](https://diyavijay.medium.com/struggling-with-cors-in-google-apps-script-heres-the-fix-e3eec09f07dd)
+      redirect: "follow",
+      // Important pour éviter preflight CORS avec Apps Script:
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
       body: JSON.stringify(payload)
     });
-    // Même si GAS renvoie du JSON, certaines configs peuvent renvoyer du texte.
+
     const text = await res.text();
-    let json;
-    try { json = JSON.parse(text); } catch { json = { ok:false, error:"Réponse non-JSON", raw:text }; }
-    return json;
+    try { return JSON.parse(text); }
+    catch { return { ok:false, error:"Réponse non-JSON", raw:text }; }
   }
 
-  /*************** INIT UI ***************/
+  function resetForm({ keepIdentity=true } = {}){
+    const nom = $("nom").value;
+    const prenom = $("prenom").value;
+
+    $("dateDepense").value = "";
+    $("montant").value = "";
+    $("commentaire").value = "";
+    $("cbEsl").checked = false;
+    $("photo").value = "";
+
+    if(!keepIdentity){
+      $("nom").value = "";
+      $("prenom").value = "";
+    } else {
+      $("nom").value = nom;
+      $("prenom").value = prenom;
+    }
+  }
+
+  // init date min/max
   const bounds = computeDateBounds();
   $("dateDepense").min = bounds.min;
   $("dateDepense").max = bounds.max;
-  $("hint").textContent = `JPG uniquement — max ${MAX_LOCAL} justificatifs par session.`;
+  $("hint").textContent = "Choisissez une photo OU un fichier. L'image sera convertie/compressée en JPEG automatiquement si nécessaire.";
 
-  $("addBtn").addEventListener("click", async () => {
-    try{
-      if(state.uploaded.length >= MAX_LOCAL) throw new Error(`Limite atteinte : ${MAX_LOCAL} justificatifs maximum.`);
+  $("sendBtn").addEventListener("click", async () => {
+    try {
       const nom = requiredValue($("nom"), "Nom");
       const prenom = requiredValue($("prenom"), "Prénom");
       const dateDepense = requiredValue($("dateDepense"), "Date de la dépense");
       validateDate(dateDepense);
       const montant = parseMontant(requiredValue($("montant"), "Montant"));
       const commentaire = requiredValue($("commentaire"), "Commentaire");
+      const cbEsl = $("cbEsl").checked;
 
       const file = $("photo").files?.[0];
-      if(!file) throw new Error("Photo obligatoire (JPG).");
-      if(file.type !== "image/jpeg") throw new Error("Photo invalide : uniquement JPG.");
+      if(!file) throw new Error("Justificatif obligatoire.");
 
       setLoading(true);
-      const dataUrl = await compressJpeg(file);
+
+      // Convertit et compresse (toujours JPEG côté serveur)
+      const dataUrl = await toJpegCompressedDataUrl(file, 1600, 1_500_000);
 
       const payload = {
         action: "submitExpense",
         apiKey: API_KEY,
         sessionId,
-        nom, prenom,
+        nom,
+        prenom,
         dateDepense,
         montant,
         commentaire,
-        dataUrl,
-        originalFileName: file.name || "justificatif.jpg"
+        cbEsl,
+        dataUrl
       };
 
       const out = await postToGAS(payload);
@@ -238,44 +259,21 @@
 
       if(!out.ok) throw new Error(out.error || "Erreur inconnue.");
 
-      state.uploaded.push({ date: dateDepense, montant, url: out.fileUrl, preview: dataUrl });
-      // reset partiel pour ajouter une autre note
-      $("montant").value = "";
-      $("commentaire").value = "";
-      $("photo").value = "";
-      render();
-      alert("✅ Note ajoutée ! Vous pouvez en ajouter une autre.");
-    }catch(e){
-      setLoading(false);
-      alert("❌ " + (e?.message || e));
-    }
-  });
+      alert("✅ Envoyé ! Merci.");
+      // Reset après validation
+      resetForm({ keepIdentity:true });
 
-  $("finishBtn").addEventListener("click", async () => {
-    try{
-      if(state.uploaded.length === 0) throw new Error("Ajoutez au moins une note avant de terminer.");
-      setLoading(true);
-      const out = await postToGAS({ action:"finalizeSession", apiKey: API_KEY, sessionId });
-      setLoading(false);
-
-      if(!out.ok) throw new Error(out.error || "Erreur inconnue.");
-      alert(`✅ Envoyé ! (${out.count} justificatif(s), total ${out.total} €)\n\nMerci.`);
-      localStorage.removeItem(SESSION_KEY);
-      location.reload();
-    }catch(e){
+    } catch(e) {
       setLoading(false);
       alert("❌ " + (e?.message || e));
     }
   });
 
   $("resetBtn").addEventListener("click", () => {
-    if(confirm("Réinitialiser la session en cours ? (Les justificatifs déjà envoyés restent dans Drive/Sheets)")){
-      localStorage.removeItem(SESSION_KEY);
-      location.reload();
+    if(confirm("Réinitialiser le formulaire ?")){
+      resetForm({ keepIdentity:false });
     }
   });
-
-  render();
 </script>
 </body>
 </html>
