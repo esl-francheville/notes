@@ -66,9 +66,23 @@
         <label for="cbEsl" style="margin:0">CB ESL</label>
       </div>
 
-      <label>Justificatif (photo ou fichier)</label>
-      <!-- Important : PAS de capture=... pour laisser le choix sur mobile -->
-      <input id="photo" type="file" accept="image/*" required />
+
+      <label>Justificatif</label>
+
+      <div class="fileRow">
+        <!-- 1) Prendre une photo -->
+        <label class="fileBtn">
+          📸 Prendre une photo
+          <input id="photoCamera" type="file" accept="image/*" capture="environment" />
+        </label>
+
+        <!-- 2) Choisir un fichier -->
+        <label class="fileBtn">
+          📁 Choisir un fichier
+          <input id="photoFile" type="file" accept="image/*" />
+        </label>
+      </div>
+
       <div class="muted" id="hint"></div>
 
       <div class="btns">
@@ -205,7 +219,8 @@
     $("montant").value = "";
     $("commentaire").value = "";
     $("cbEsl").checked = false;
-    $("photo").value = "";
+    $("photoCamera").value = "";
+    $("photoFile").value = "";
 
     if(!keepIdentity){
       $("nom").value = "";
@@ -232,7 +247,7 @@
       const commentaire = requiredValue($("commentaire"), "Commentaire");
       const cbEsl = $("cbEsl").checked;
 
-      const file = $("photo").files?.[0];
+      const file = $("photoCamera").files?.[0] || $("photoFile").files?.[0];
       if(!file) throw new Error("Justificatif obligatoire.");
 
       setLoading(true);
