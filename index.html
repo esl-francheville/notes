@@ -12,7 +12,8 @@
     input, textarea{width:100%;box-sizing:border-box;padding:12px;border:1px solid #d8dbe7;border-radius:12px;font-size:16px;background:#fff}
     textarea{min-height:84px;resize:vertical}
     .row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-    .btns{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+    .btns{display:flex;justify-content:center;gap:12px;flex-wrap:wrap;margin-top:12px;}
+    .btnWide{width:260px;max-width:90vw;text-align:center;}    
     button{border:0;border-radius:12px;padding:12px 14px;font-size:16px;cursor:pointer}
     .primary{background:#2563eb;color:#fff}
     .danger{background:#ef4444;color:#fff}
@@ -21,6 +22,14 @@
     .checkline{display:flex;align-items:center;gap:10px;margin-top:10px}
     .checkline input{width:auto}
     .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#eef2ff;color:#3730a3;font-size:12px}
+    .pickRow{display:flex;justify-content:center;gap:12px;flex-wrap:wrap;margin-top:8px;}
+    .fileStatus{margin-top:10px;padding:10px 12px;border:1px dashed #d8dbe7;border-radius:12px;background:#fafbff;font-size:13px;color:#333;text-align:center;}
+    .preview{margin-top:10px;width:100%;max-width:360px;border-radius:12px;display:block;margin-left:auto;margin-right:auto;box-shadow:0 8px 24px rgba(0,0,0,.08);}
+    @media (max-width: 480px){
+    .btns{ flex-direction:column; align-items:center; }
+    .btnWide{ width:min(360px, 92vw); }
+}
+
   </style>
 </head>
 <body>
@@ -69,26 +78,26 @@
 
       <label>Justificatif</label>
 
-      <div class="fileRow">
-        <!-- 1) Prendre une photo -->
-        <label class="fileBtn">
-          📸 Prendre une photo
-          <input id="photoCamera" type="file" accept="image/*" capture="environment" />
-        </label>
+      <!-- Inputs invisibles -->
+      <input id="inpPhoto" type="file" accept="image/*" capture="environment" hidden>
+      <input id="inpFile"  type="file" accept="image/*" hidden>
 
-        <!-- 2) Choisir un fichier -->
-        <label class="fileBtn">
-          📁 Choisir un fichier
-          <input id="photoFile" type="file" accept="image/*" />
-        </label>
+      <div class="pickRow">
+        <button type="button" class="secondary btnWide" id="btnPhoto">📸 Photo</button>
+        <button type="button" class="secondary btnWide" id="btnFile">📁 Fichier</button>
+      </div>
+
+      <div class="fileStatus" id="fileStatus">
+        Aucun justificatif sélectionné
       </div>
 
       <div class="muted" id="hint"></div>
 
       <div class="btns">
-        <button class="primary" id="sendBtn">Envoyer la note</button>
-        <button class="danger" id="resetBtn">Réinitialiser</button>
+        <button class="primary btnWide" id="sendBtn">Envoyer la note</button>
+        <button class="danger btnWide" id="resetBtn">Réinitialiser</button>
       </div>
+
     </div>
   </div>
 
@@ -97,197 +106,292 @@
   const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxc3nC6iROsnVslalW6GPg6rI_fO2FXCAM3l-NOyH2QKdtwvZLkRPX_HNIyMf8q7ILZug/exec";
   const API_KEY = ""; // optionnel
 
-  const $ = (id) => document.getElementById(id);
-  function setLoading(v){ $("formCard").classList.toggle("loading", v); }
+/**************** UTIL DOM ****************/
+const $ = (id) => document.getElementById(id);
 
-  function requiredValue(el, label){
-    const v = (el.value || "").trim();
-    if(!v) throw new Error(`Champ obligatoire : ${label}`);
-    return v;
+function setLoading(v) {
+  $("formCard").classList.toggle("loading", v);
+}
+
+function requiredValue(el, label) {
+  const v = (el.value || "").trim();
+  if (!v) throw new Error(`Champ obligatoire : ${label}`);
+  return v;
+}
+
+function parseMontant(v) {
+  const n = Number(String(v).replace(",", "."));
+  if (!isFinite(n) || n <= 0) throw new Error("Montant invalide (doit être > 0).");
+  return n.toFixed(2);
+}
+
+/**************** RÈGLES DATE ****************/
+function computeDateBounds() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const min = new Date(year - 1, 0, 1); // 01/01 année-1
+  const max = new Date(year, now.getMonth(), now.getDate()); // aujourd'hui (sans heure)
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  return { min: fmt(min), max: fmt(max) };
+}
+
+function validateDate(dateStr) {
+  const { min, max } = computeDateBounds();
+  if (dateStr < min) throw new Error("Date interdite : antérieure au 01/01 de l’année précédente.");
+  if (dateStr > max) throw new Error("Date interdite : postérieure à aujourd’hui.");
+}
+
+/**************** SESSION ID (utile debug/anti-abus) ****************/
+const SESSION_KEY = "ndf_session_id_single_v3";
+const sessionId = localStorage.getItem(SESSION_KEY) || crypto.randomUUID();
+localStorage.setItem(SESSION_KEY, sessionId);
+
+/**************** FICHIERS : boutons custom Photo/Fichier ****************/
+let selectedFile = null;
+
+function humanSize(bytes) {
+  if (bytes === undefined || bytes === null) return "";
+  const units = ["o", "Ko", "Mo", "Go"];
+  let i = 0;
+  let n = bytes;
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024;
+    i++;
   }
+  return `${n.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
 
-  function parseMontant(v){
-    const n = Number(String(v).replace(",", "."));
-    if(!isFinite(n) || n <= 0) throw new Error("Montant invalide (doit être > 0).");
-    return n.toFixed(2);
-  }
+function setStatus(file) {
+  const status = $("fileStatus");
+  const preview = $("preview");
 
-  function computeDateBounds(){
-    const now = new Date();
-    const year = now.getFullYear();
-    const min = new Date(year - 1, 0, 1); // 01/01 année-1
-    const max = new Date(year, now.getMonth(), now.getDate()); // aujourd'hui
-    const fmt = (d) => d.toISOString().slice(0,10);
-    return { min: fmt(min), max: fmt(max) };
-  }
-
-  function validateDate(dateStr){
-    const {min, max} = computeDateBounds();
-    if(dateStr < min) throw new Error("Date interdite : antérieure au 01/01 de l’année précédente.");
-    if(dateStr > max) throw new Error("Date interdite : postérieure à aujourd’hui.");
-  }
-
-  /*************** SessionID ***************/
-  // Utile pour logs/anti-abus côté serveur, et pour identifier l’utilisateur en cas de souci.
-  const SESSION_KEY = "ndf_session_id_single_v2";
-  const sessionId = localStorage.getItem(SESSION_KEY) || crypto.randomUUID();
-  localStorage.setItem(SESSION_KEY, sessionId);
-  document.getElementById("sessionPill").textContent = sessionId;
-
-  /*************** Image: conversion + compression ***************/
-  function readAsDataURL(file){
-    return new Promise((resolve, reject)=>{
-      const r = new FileReader();
-      r.onload = () => resolve(r.result);
-      r.onerror = reject;
-      r.readAsDataURL(file);
-    });
-  }
-
-  function loadImage(dataUrl){
-    return new Promise((resolve, reject)=>{
-      const img = new Image();
-      img.onload = ()=>resolve(img);
-      img.onerror = reject;
-      img.src = dataUrl;
-    });
-  }
-
-  function estimateBytesFromDataUrl(dataUrl){
-    // bytes approx = base64_len * 3/4
-    const i = dataUrl.indexOf(",") + 1;
-    const b64len = Math.max(0, dataUrl.length - i);
-    return Math.floor(b64len * 0.75);
-  }
-
-  /**
-   * Convertit n'importe quelle image lisible par le navigateur en JPEG,
-   * et compresse (downscale + qualité) si besoin.
-   *
-   * - maxW: largeur max
-   * - targetBytes: poids cible approximatif (ex: 1.5MB)
-   */
-  async function toJpegCompressedDataUrl(file, maxW=1600, targetBytes=1_500_000){
-    if(!file.type.startsWith("image/")) throw new Error("Fichier invalide : image attendue.");
-
-    const src = await readAsDataURL(file);
-    const img = await loadImage(src);
-
-    const ratio = Math.min(1, maxW / img.width);
-    const w = Math.round(img.width * ratio);
-    const h = Math.round(img.height * ratio);
-
-    const canvas = document.createElement("canvas");
-    canvas.width = w; canvas.height = h;
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(img, 0, 0, w, h);
-
-    // Si l'image source est déjà petite, on encode en JPEG haute qualité
-    let q = 0.86;
-    let out = canvas.toDataURL("image/jpeg", q);
-
-    // Ajuste la qualité pour viser targetBytes
-    while(estimateBytesFromDataUrl(out) > targetBytes && q > 0.45){
-      q -= 0.08;
-      out = canvas.toDataURL("image/jpeg", q);
+  if (!file) {
+    status.textContent = "Aucun justificatif sélectionné";
+    if (preview) {
+      preview.style.display = "none";
+      preview.src = "";
     }
-    return out; // data:image/jpeg;base64,...
+    return;
   }
 
-  /*************** API call ***************/
-  async function postToGAS(payload){
-    if(APPS_SCRIPT_URL.includes("PASTE_")) throw new Error("Configure APPS_SCRIPT_URL dans index.html");
+  const name = file.name || "Justificatif";
+  status.textContent = `${name} — ${humanSize(file.size)}`;
 
-    const res = await fetch(APPS_SCRIPT_URL, {
-      method: "POST",
-      redirect: "follow",
-      // Important pour éviter preflight CORS avec Apps Script:
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify(payload)
-    });
+  // Aperçu image optionnel
+  if (preview && file.type && file.type.startsWith("image/")) {
+    const url = URL.createObjectURL(file);
+    preview.src = url;
+    preview.style.display = "block";
+  } else if (preview) {
+    preview.style.display = "none";
+    preview.src = "";
+  }
+}
 
-    const text = await res.text();
-    try { return JSON.parse(text); }
-    catch { return { ok:false, error:"Réponse non-JSON", raw:text }; }
+// Branche les boutons vers les inputs file cachés
+function initFilePickers() {
+  const inpPhoto = $("inpPhoto"); // input capture camera
+  const inpFile = $("inpFile");   // input file picker
+  const btnPhoto = $("btnPhoto");
+  const btnFile = $("btnFile");
+
+  btnPhoto.addEventListener("click", () => inpPhoto.click());
+  btnFile.addEventListener("click", () => inpFile.click());
+
+  inpPhoto.addEventListener("change", () => {
+    selectedFile = inpPhoto.files?.[0] || null;
+    // vider l'autre input pour éviter ambiguïté
+    inpFile.value = "";
+    setStatus(selectedFile);
+  });
+
+  inpFile.addEventListener("change", () => {
+    selectedFile = inpFile.files?.[0] || null;
+    inpPhoto.value = "";
+    setStatus(selectedFile);
+  });
+
+  // état initial
+  setStatus(null);
+}
+
+/**************** IMAGE : conversion + compression JPEG ****************/
+function readAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+
+function loadImage(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
+}
+
+function estimateBytesFromDataUrl(dataUrl) {
+  const i = dataUrl.indexOf(",") + 1;
+  const b64len = Math.max(0, dataUrl.length - i);
+  // base64 => ~ 3/4
+  return Math.floor(b64len * 0.75);
+}
+
+/**
+ * Convertit n'importe quelle image en JPEG + compresse :
+ * - downscale si largeur > maxW
+ * - baisse la qualité si > targetBytes
+ */
+async function toJpegCompressedDataUrl(file, maxW = 1600, targetBytes = 1500000) {
+  if (!file || !file.type || !file.type.startsWith("image/")) {
+    throw new Error("Justificatif invalide : image attendue.");
   }
 
-  function resetForm({ keepIdentity=true } = {}){
-    const nom = $("nom").value;
-    const prenom = $("prenom").value;
+  const src = await readAsDataURL(file);
+  const img = await loadImage(src);
 
-    $("dateDepense").value = "";
-    $("montant").value = "";
-    $("commentaire").value = "";
-    $("cbEsl").checked = false;
-    $("photoCamera").value = "";
-    $("photoFile").value = "";
+  const ratio = Math.min(1, maxW / img.width);
+  const w = Math.round(img.width * ratio);
+  const h = Math.round(img.height * ratio);
 
-    if(!keepIdentity){
-      $("nom").value = "";
-      $("prenom").value = "";
-    } else {
-      $("nom").value = nom;
-      $("prenom").value = prenom;
-    }
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d");
+  ctx.drawImage(img, 0, 0, w, h);
+
+  // Qualité initiale
+  let q = 0.86;
+  let out = canvas.toDataURL("image/jpeg", q);
+
+  // Ajuste la qualité pour viser targetBytes
+  while (estimateBytesFromDataUrl(out) > targetBytes && q > 0.45) {
+    q -= 0.08;
+    out = canvas.toDataURL("image/jpeg", q);
   }
 
-  // init date min/max
+  return out; // data:image/jpeg;base64,...
+}
+
+/**************** APPEL API Apps Script ****************/
+async function postToGAS(payload) {
+  if (!APPS_SCRIPT_URL || APPS_SCRIPT_URL.includes("PASTE_")) {
+    throw new Error("APPS_SCRIPT_URL non configurée.");
+  }
+
+  // Important: envoyer en text/plain pour éviter le preflight CORS (Apps Script) [1](https://blog.payableapps.com/google-form-requiring-login-how-to-fix/)[2](https://www.youtube.com/watch?v=sL5-FhULalM)
+  const res = await fetch(APPS_SCRIPT_URL, {
+    method: "POST",
+    redirect: "follow",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify(payload),
+  });
+
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { ok: false, error: "Réponse non-JSON", raw: text };
+  }
+}
+
+/**************** RESET ****************/
+function resetForm({ keepIdentity = true } = {}) {
+  const keepNom = $("nom").value;
+  const keepPrenom = $("prenom").value;
+
+  $("dateDepense").value = "";
+  $("montant").value = "";
+  $("commentaire").value = "";
+  $("cbEsl").checked = false;
+
+  // reset fichiers
+  selectedFile = null;
+  $("inpPhoto").value = "";
+  $("inpFile").value = "";
+  setStatus(null);
+
+  if (!keepIdentity) {
+    $("nom").value = "";
+    $("prenom").value = "";
+  } else {
+    $("nom").value = keepNom;
+    $("prenom").value = keepPrenom;
+  }
+}
+
+/**************** INIT UI ****************/
+function initUI() {
+  // bornes date min/max
   const bounds = computeDateBounds();
   $("dateDepense").min = bounds.min;
   $("dateDepense").max = bounds.max;
-  $("hint").textContent = "Choisissez une photo OU un fichier. L'image sera convertie/compressée en JPEG automatiquement si nécessaire.";
 
-  $("sendBtn").addEventListener("click", async () => {
-    try {
-      const nom = requiredValue($("nom"), "Nom");
-      const prenom = requiredValue($("prenom"), "Prénom");
-      const dateDepense = requiredValue($("dateDepense"), "Date de la dépense");
-      validateDate(dateDepense);
-      const montant = parseMontant(requiredValue($("montant"), "Montant"));
-      const commentaire = requiredValue($("commentaire"), "Commentaire");
-      const cbEsl = $("cbEsl").checked;
+  // hint
+  $("hint").textContent =
+    "Choisissez une photo ou un fichier. L'image sera convertie/compressée en JPEG automatiquement si nécessaire.";
 
-      const file = $("photoCamera").files?.[0] || $("photoFile").files?.[0];
-      if(!file) throw new Error("Justificatif obligatoire.");
-
-      setLoading(true);
-
-      // Convertit et compresse (toujours JPEG côté serveur)
-      const dataUrl = await toJpegCompressedDataUrl(file, 1600, 1_500_000);
-
-      const payload = {
-        action: "submitExpense",
-        apiKey: API_KEY,
-        sessionId,
-        nom,
-        prenom,
-        dateDepense,
-        montant,
-        commentaire,
-        cbEsl,
-        dataUrl
-      };
-
-      const out = await postToGAS(payload);
-      setLoading(false);
-
-      if(!out.ok) throw new Error(out.error || "Erreur inconnue.");
-
-      alert("✅ Envoyé ! Merci.");
-      // Reset après validation
-      resetForm({ keepIdentity:true });
-
-    } catch(e) {
-      setLoading(false);
-      alert("❌ " + (e?.message || e));
-    }
-  });
-
+  // boutons
+  $("sendBtn").addEventListener("click", onSend);
   $("resetBtn").addEventListener("click", () => {
-    if(confirm("Réinitialiser le formulaire ?")){
-      resetForm({ keepIdentity:false });
-    }
+    if (confirm("Réinitialiser le formulaire ?")) resetForm({ keepIdentity: false });
   });
+
+  initFilePickers();
+}
+
+async function onSend() {
+  try {
+    // validations
+    const nom = requiredValue($("nom"), "Nom");
+    const prenom = requiredValue($("prenom"), "Prénom");
+    const dateDepense = requiredValue($("dateDepense"), "Date de la dépense");
+    validateDate(dateDepense);
+    const montant = parseMontant(requiredValue($("montant"), "Montant"));
+    const commentaire = requiredValue($("commentaire"), "Commentaire");
+    const cbEsl = $("cbEsl").checked;
+
+    const file = selectedFile;
+    if (!file) throw new Error("Justificatif obligatoire (Photo ou Fichier).");
+
+    setLoading(true);
+
+    // convert + compress
+    const dataUrl = await toJpegCompressedDataUrl(file, 1600, 1500000);
+
+    const payload = {
+      action: "submitExpense",
+      apiKey: API_KEY,
+      sessionId,
+      nom,
+      prenom,
+      dateDepense,
+      montant,
+      commentaire,
+      cbEsl,
+      dataUrl,
+    };
+
+    const out = await postToGAS(payload);
+    setLoading(false);
+
+    if (!out.ok) throw new Error(out.error || "Erreur inconnue côté serveur.");
+
+    alert("✅ Envoyé ! Merci.");
+    resetForm({ keepIdentity: true });
+
+  } catch (e) {
+    setLoading(false);
+    alert("❌ " + (e?.message || e));
+  }
+}
+
+// Lance tout au chargement
+initUI();
 </script>
 </body>
 </html>
